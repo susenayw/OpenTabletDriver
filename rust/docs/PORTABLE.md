@@ -12,4 +12,4 @@ This Windows pre-release has been tested only with the VEIKK S640. Although the 
 
 Source: https://github.com/susenayw/OpenTabletDriver/tree/codex/rust-s640-low-memory/rust
 
-AI assistance was used to create this migration. See the source repository for the retained upstream code, license, tests, and migration notes. The final UI design will follow a later HTML mockup.
+AI assistance was used to create this migration. See the source repository for retained upstream tablet profiles and parser references, the license, and Rust migration notes. The final UI design will follow a later HTML mockup.

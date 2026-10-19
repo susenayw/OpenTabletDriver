@@ -4,7 +4,7 @@
 
 This is a runnable Rust migration milestone inside the existing repository, with a total-process memory budget of **less than 50,000,000 bytes** for working set and private committed memory.
 
-The existing C# projects are retained. The upstream S640 definition is embedded directly, and the parser is ported from its corresponding upstream C# source. No .NET runtime, WebView, browser renderer, or external HID library is required by the Rust executables.
+The upstream tablet configuration and parser source trees are retained as migration references; the Rust app currently embeds and uses only the VEIKK S640 definition. Their presence does not imply support for those other models. The S640 parser is ported from its corresponding upstream C# source. No .NET runtime, WebView, browser renderer, or external HID library is required by the Rust executables.
 
 ![OpenTabletDriver Rust S640 pre-release app with tablet scale set to 50%](docs/images/veikk-s640-rust-alpha.png)
 
