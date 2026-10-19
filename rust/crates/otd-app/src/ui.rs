@@ -12,7 +12,13 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::*,
-    Graphics::Gdi::*,
+    Graphics::{
+        Dwm::DwmSetWindowAttribute,
+        Gdi::{
+            CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, FF_DONTCARE,
+            FW_NORMAL, OUT_DEFAULT_PRECIS, *,
+        },
+    },
     System::LibraryLoader::*,
     UI::{
         Controls::{
@@ -65,6 +71,10 @@ struct Ui {
     start: HWND,
     stop: HWND,
     scale: f32,
+    layout_x: f32,
+    layout_y: f32,
+    font: HFONT,
+    controls: Vec<ChildControl>,
     settings: Settings,
     settings_window: HWND,
     close_to_tray: HWND,
@@ -75,6 +85,13 @@ struct Ui {
     self_test: Option<u8>,
     test_error: Option<String>,
     screenshot: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+struct ChildControl {
+    parent: HWND,
+    hwnd: HWND,
+    bounds: [i32; 4],
 }
 
 fn w(s: &str) -> Vec<u16> {
@@ -93,7 +110,90 @@ fn read_text(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buffer[..len.max(0) as usize])
 }
 
+unsafe fn apply_window_chrome(hwnd: HWND) {
+    // Windows 11 uses dark title bars and rounded corners; older Windows versions
+    // simply ignore unsupported attributes.
+    unsafe {
+        let dark = 1i32;
+        let rounded = 2i32;
+        for attribute in [20, 19] {
+            DwmSetWindowAttribute(
+                hwnd,
+                attribute,
+                &dark as *const i32 as *const _,
+                std::mem::size_of_val(&dark) as u32,
+            );
+        }
+        DwmSetWindowAttribute(
+            hwnd,
+            33,
+            &rounded as *const i32 as *const _,
+            std::mem::size_of_val(&rounded) as u32,
+        );
+    }
+}
+
 impl Ui {
+    fn layout_children(&mut self, parent: HWND) {
+        let mut client: RECT = unsafe { zeroed() };
+        unsafe { GetClientRect(parent, &mut client) };
+        let (base_width, base_height) = if parent == self.main_window {
+            (740.0, 760.0)
+        } else {
+            (340.0, 170.0)
+        };
+        let sx = (client.right as f32 / (base_width * self.scale)).max(0.1);
+        let sy = (client.bottom as f32 / (base_height * self.scale)).max(0.1);
+        if parent == self.main_window {
+            self.layout_x = sx;
+            self.layout_y = sy;
+        }
+        for control in self
+            .controls
+            .iter()
+            .filter(|control| control.parent == parent)
+        {
+            let [x, y, width, height] = control.bounds;
+            unsafe {
+                SetWindowPos(
+                    control.hwnd,
+                    null_mut(),
+                    (x as f32 * self.scale * sx).round() as i32,
+                    (y as f32 * self.scale * sy).round() as i32,
+                    (width as f32 * self.scale * sx).round().max(1.0) as i32,
+                    (height as f32 * self.scale * sy).round().max(1.0) as i32,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        }
+    }
+
+    fn validate_child_bounds(&self, parent: HWND) -> Result<(), String> {
+        let mut client: RECT = unsafe { zeroed() };
+        unsafe { GetClientRect(parent, &mut client) };
+        for control in self
+            .controls
+            .iter()
+            .filter(|control| control.parent == parent)
+        {
+            let mut bounds: RECT = unsafe { zeroed() };
+            unsafe {
+                if GetWindowRect(control.hwnd, &mut bounds) == 0 {
+                    return Err("Could not inspect a resized control".into());
+                }
+                MapWindowPoints(null_mut(), parent, (&mut bounds as *mut RECT).cast(), 2);
+            }
+            if bounds.left < 0
+                || bounds.top < 0
+                || bounds.right > client.right
+                || bounds.bottom > client.bottom
+            {
+                return Err("A control extends beyond the resized window".into());
+            }
+        }
+        Ok(())
+    }
+
     fn scale_dimensions(&self, percent: f32) -> (f32, f32) {
         let width = read_text(self.edits[8]).parse::<f32>().unwrap_or(1920.0);
         let height = read_text(self.edits[9]).parse::<f32>().unwrap_or(1080.0);
@@ -208,6 +308,7 @@ impl Ui {
             if window.is_null() {
                 return Err(io::Error::last_os_error().to_string());
             }
+            apply_window_chrome(window);
             self.settings_window = window;
             SetWindowLongPtrW(window, GWLP_USERDATA, self as *mut Ui as isize);
             self.control(
@@ -311,6 +412,25 @@ impl Ui {
                         "50% scale produced an unexpected area: {width:.1} by {height:.1} mm"
                     ));
                 }
+                let mut window_rect: RECT = unsafe { zeroed() };
+                unsafe { GetWindowRect(hwnd, &mut window_rect) };
+                if window_rect.left < -10_000 {
+                    // The automated UI run stays offscreen while exercising the same
+                    // resize path used by a maximized window.
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            null_mut(),
+                            window_rect.left,
+                            window_rect.top,
+                            (1100.0 * self.scale).round() as i32,
+                            (900.0 * self.scale).round() as i32,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                }
+                self.layout_children(hwnd);
+                self.validate_child_bounds(hwnd)?;
                 self.close_at = Some(Instant::now() + Duration::from_millis(500));
             }
             _ => return Ok(()),
@@ -320,7 +440,7 @@ impl Ui {
     }
 
     fn control(
-        &self,
+        &mut self,
         parent: HWND,
         class: &str,
         title: &str,
@@ -351,7 +471,14 @@ impl Ui {
                 null_mut(),
                 null(),
             );
-            SendMessageW(h, WM_SETFONT, GetStockObject(DEFAULT_GUI_FONT) as usize, 1);
+            SendMessageW(h, WM_SETFONT, self.font as usize, 1);
+            if !h.is_null() {
+                self.controls.push(ChildControl {
+                    parent,
+                    hwnd: h,
+                    bounds,
+                });
+            }
             h
         }
     }
@@ -796,7 +923,7 @@ impl Ui {
             text(
                 self.footer,
                 &format!(
-                    "Whole process incl. UI: {:.2} MB working set / {:.2} MB private (target < 50 MB)\r\nMouse output only. Drawing pressure injection and original .NET plugins are pending.",
+                    "RAM: {:.1} MB working set / {:.1} MB private (50 MB limit)\r\nMouse output only · pressure injection pending",
                     memory.working_set_bytes as f64 / 1_000_000.0,
                     memory.private_bytes as f64 / 1_000_000.0
                 ),
@@ -825,11 +952,16 @@ unsafe fn draw_tablet_geometry(dc: HDC, ui: &Ui, offset: POINT) {
     // and released before returning.
     unsafe {
         let scaled = |value: i32| (value as f32 * ui.scale).round() as i32;
+        let shape_scale = ui.layout_x.min(ui.layout_y);
+        let center_x = (187.5 * ui.scale * ui.layout_x).round() as i32 + offset.x;
+        let center_y = (383.0 * ui.scale * ui.layout_y).round() as i32 + offset.y;
+        let half_width = (145.5 * ui.scale * shape_scale).round() as i32;
+        let half_height = (97.0 * ui.scale * shape_scale).round() as i32;
         let tablet = RECT {
-            left: scaled(42) + offset.x,
-            top: scaled(286) + offset.y,
-            right: scaled(333) + offset.x,
-            bottom: scaled(480) + offset.y,
+            left: center_x - half_width,
+            top: center_y - half_height,
+            right: center_x + half_width,
+            bottom: center_y + half_height,
         };
         let surface = CreateSolidBrush(0x001b1b1b);
         let border = CreateSolidBrush(0x00424242);
@@ -838,10 +970,10 @@ unsafe fn draw_tablet_geometry(dc: HDC, ui: &Ui, offset: POINT) {
         SetTextColor(dc, 0x00eeeeee);
         let label = w("VEIKK S640");
         let mut label_box = RECT {
-            left: scaled(51) + offset.x,
-            top: scaled(266) + offset.y,
-            right: scaled(180) + offset.x,
-            bottom: scaled(284) + offset.y,
+            left: tablet.left + scaled(9),
+            top: tablet.top - scaled(20),
+            right: tablet.left + scaled(138),
+            bottom: tablet.top - scaled(2),
         };
         DrawTextW(
             dc,
@@ -877,7 +1009,7 @@ unsafe fn draw_tablet_geometry(dc: HDC, ui: &Ui, offset: POINT) {
                 y: (cy + x * sin + y * cos).round() as i32,
             });
             let active = CreateSolidBrush(0x00ffffff);
-            let pen = CreatePen(PS_SOLID, scaled(1), 0x00ffffff);
+            let pen = CreatePen(PS_SOLID, scaled(1).max(1), 0x00ffffff);
             let old_brush = SelectObject(dc, active);
             let old_pen = SelectObject(dc, pen);
             Polygon(dc, points.as_mut_ptr(), points.len() as i32);
@@ -919,15 +1051,21 @@ unsafe fn draw_button(item: &DRAWITEMSTRUCT, scale: f32) {
         let disabled = item.itemState & ODS_DISABLED != 0;
         let pressed = item.itemState & ODS_SELECTED != 0;
         let filled = (primary || pressed) && !disabled;
-        let background = if filled { 0x00ffffff } else { 0x00101010 };
+        let background = if filled { 0x00d77800 } else { 0x00202020 };
         let foreground = if filled {
-            0x00000000
+            0x00ffffff
         } else if disabled {
             0x00777777
         } else {
             0x00ffffff
         };
-        let outline = if disabled { 0x00525252 } else { 0x00ffffff };
+        let outline = if disabled {
+            0x00424242
+        } else if primary {
+            0x00d77800
+        } else {
+            0x00444444
+        };
         let brush = CreateSolidBrush(background);
         let pen = CreatePen(PS_SOLID, scale.max(1.0).round() as i32, outline);
         let old_brush = SelectObject(dc, brush);
@@ -1074,6 +1212,21 @@ unsafe extern "system" fn window_proc(
                     }
                     InvalidateRect(hwnd, null(), 0);
                 }
+                WM_SIZE if hwnd == ui.main_window && wparam != SIZE_MINIMIZED as usize => {
+                    ui.layout_children(hwnd);
+                    InvalidateRect(hwnd, null(), 0);
+                    return 0;
+                }
+                WM_SIZE if hwnd == ui.settings_window && wparam != SIZE_MINIMIZED as usize => {
+                    ui.layout_children(hwnd);
+                    return 0;
+                }
+                WM_GETMINMAXINFO if hwnd == ui.main_window => {
+                    let info = &mut *(lparam as *mut MINMAXINFO);
+                    info.ptMinTrackSize.x = (756.0 * ui.scale).round() as i32;
+                    info.ptMinTrackSize.y = (790.0 * ui.scale).round() as i32;
+                    return 0;
+                }
                 WM_HSCROLL if lparam as HWND == ui.scale_slider => {
                     let percent = SendMessageW(ui.scale_slider, TBM_GETPOS, 0, 0) as u32;
                     ui.apply_area_scale(percent);
@@ -1093,7 +1246,7 @@ unsafe extern "system" fn window_proc(
                     let dc = wparam as HDC;
                     SetTextColor(dc, 0x00eeeeee);
                     let edit = message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX;
-                    SetBkColor(dc, if edit { 0x00141414 } else { 0x00000000 });
+                    SetBkColor(dc, if edit { 0x001d1d1d } else { 0x00101010 });
                     return if edit {
                         ui.input_brush as isize
                     } else {
@@ -1158,6 +1311,7 @@ unsafe extern "system" fn window_proc(
                         KillTimer(hwnd, 1);
                         DeleteObject(ui.background_brush);
                         DeleteObject(ui.input_brush);
+                        DeleteObject(ui.font);
                         PostQuitMessage(0);
                     } else if hwnd == ui.settings_window {
                         ui.settings_window = null_mut();
@@ -1204,15 +1358,23 @@ pub fn run(
         if RegisterClassW(&wc) == 0 {
             return Err(io::Error::last_os_error().to_string());
         }
+        let window_style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+        let mut frame = RECT {
+            left: 0,
+            top: 0,
+            right: (740.0 * scale).round() as i32,
+            bottom: (760.0 * scale).round() as i32,
+        };
+        AdjustWindowRectEx(&mut frame, window_style, 0, 0);
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),
             w("OpenTabletDriver Rust — S640 alpha").as_ptr(),
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            window_style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            (740.0 * scale) as i32,
-            (760.0 * scale) as i32,
+            frame.right - frame.left,
+            frame.bottom - frame.top,
             null_mut(),
             null_mut(),
             instance,
@@ -1221,6 +1383,7 @@ pub fn run(
         if hwnd.is_null() {
             return Err(io::Error::last_os_error().to_string());
         }
+        apply_window_chrome(hwnd);
         let mut ui = Box::new(Ui {
             engine,
             main_window: hwnd,
@@ -1237,12 +1400,31 @@ pub fn run(
             start: null_mut(),
             stop: null_mut(),
             scale,
+            layout_x: 1.0,
+            layout_y: 1.0,
+            font: CreateFontW(
+                -((14.0 * scale).round() as i32),
+                0,
+                0,
+                0,
+                FW_NORMAL as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET as u32,
+                OUT_DEFAULT_PRECIS as u32,
+                CLIP_DEFAULT_PRECIS as u32,
+                CLEARTYPE_QUALITY as u32,
+                (DEFAULT_PITCH | FF_DONTCARE) as u32,
+                w("Segoe UI").as_ptr(),
+            ),
+            controls: Vec::with_capacity(48),
             settings,
             settings_window: null_mut(),
             close_to_tray: null_mut(),
             tray_added: false,
-            background_brush: CreateSolidBrush(0x00000000),
-            input_brush: CreateSolidBrush(0x00141414),
+            background_brush: CreateSolidBrush(0x00101010),
+            input_brush: CreateSolidBrush(0x001d1d1d),
             close_at: close_after.map(|d| Instant::now() + d),
             self_test: self_test.then_some(0),
             test_error: None,
@@ -1254,6 +1436,7 @@ pub fn run(
             DestroyWindow(hwnd);
             return Err(e);
         }
+        ui.layout_children(hwnd);
         if ui.settings.close_to_tray
             && let Err(e) = ui.install_tray_icon(hwnd, true)
         {
@@ -1279,6 +1462,16 @@ pub fn run(
             );
         }
         ShowWindow(hwnd, if hidden { SW_SHOWNOACTIVATE } else { SW_SHOW });
+        apply_window_chrome(hwnd);
+        SetWindowPos(
+            hwnd,
+            null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
         let mut msg: MSG = zeroed();
         loop {
             match GetMessageW(&mut msg, null_mut(), 0, 0) {

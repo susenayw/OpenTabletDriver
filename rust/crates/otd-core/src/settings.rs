@@ -50,8 +50,12 @@ pub struct Settings {
     pub tip_threshold_percent: f32,
     pub tip_binding: MouseBinding,
     pub pen_bindings: [MouseBinding; 3],
-    #[serde(default)]
+    #[serde(default = "close_to_tray_default")]
     pub close_to_tray: bool,
+}
+
+const fn close_to_tray_default() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -80,7 +84,7 @@ impl Default for Settings {
                 MouseBinding::Middle,
                 MouseBinding::Disabled,
             ],
-            close_to_tray: false,
+            close_to_tray: true,
         }
     }
 }
@@ -132,16 +136,24 @@ mod tests {
     use super::Settings;
 
     #[test]
-    fn close_to_tray_defaults_off_and_old_settings_still_load() {
+    fn close_to_tray_defaults_on_and_old_settings_still_load() {
         let current = serde_json::to_string(&Settings::default()).unwrap();
         let parsed: Settings = serde_json::from_str(&current).unwrap();
-        assert!(!parsed.close_to_tray);
+        assert!(parsed.close_to_tray);
         assert_eq!(parsed.area.width_mm, 76.2);
         assert_eq!(parsed.area.height_mm, 42.9);
 
         let mut old = serde_json::to_value(Settings::default()).unwrap();
         old.as_object_mut().unwrap().remove("close_to_tray");
         let parsed: Settings = serde_json::from_value(old).unwrap();
+        assert!(parsed.close_to_tray);
+
+        let opted_out = Settings {
+            close_to_tray: false,
+            ..Settings::default()
+        };
+        let parsed: Settings =
+            serde_json::from_str(&serde_json::to_string(&opted_out).unwrap()).unwrap();
         assert!(!parsed.close_to_tray);
     }
 }
