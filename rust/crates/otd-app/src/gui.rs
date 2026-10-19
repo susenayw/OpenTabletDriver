@@ -2,7 +2,7 @@
 
 fn main() {
     if let Err(error) = otd_app::run() {
-        let title = otd_platform::wide(std::ffi::OsStr::new("OpenTabletDriver Rust"));
+        let title = otd_platform::wide(std::ffi::OsStr::new("Rust Tablet"));
         let text = otd_platform::wide(std::ffi::OsStr::new(&error));
         // SAFETY: terminated strings remain live for the modal error dialog.
         unsafe {

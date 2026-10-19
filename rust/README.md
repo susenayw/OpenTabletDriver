@@ -1,4 +1,4 @@
-# OpenTabletDriver Rust pre-release · VEIKK S640
+# Rust Tablet pre-release · VEIKK S640
 
 > **Pre-release software for Windows x64. Currently supports the VEIKK S640 only.** Other tablet models are not supported. This early Rust app is separate from the established OpenTabletDriver builds and is not a replacement for them.
 
@@ -6,7 +6,7 @@ This is a runnable Rust migration milestone inside the existing repository, with
 
 The upstream tablet configuration and parser source trees are retained as migration references; the Rust app currently embeds and uses only the VEIKK S640 definition. Their presence does not imply support for those other models. The S640 parser is ported from its corresponding upstream C# source. No .NET runtime, WebView, browser renderer, or external HID library is required by the Rust executables.
 
-![OpenTabletDriver Rust S640 pre-release app with tablet scale set to 50%](docs/images/veikk-s640-rust-alpha.png)
+![Rust Tablet S640 pre-release app with tablet scale set to 50%](docs/images/veikk-s640-rust-alpha.png)
 
 ## Run
 
@@ -20,7 +20,7 @@ cargo build --release --locked
 Open the native control panel with synthetic input:
 
 ```powershell
-./target/release/otd-rust-ui.exe --simulate
+./target/release/rust-tablet.exe --simulate
 ```
 
 Simulation never opens/initializes the tablet or injects pointer events. The native panel includes a live tablet-area diagram, area dimensions/center/rotation, display mapping, a 1–100% tablet-scale slider, aspect fitting, clipping/limiting, tip threshold, mouse bindings, Apply, Save, Start/Stop, status, rate, core processing time, and process memory. Tablet scale matches the largest area to the configured display aspect ratio, keeps it centered, and starts at 50%. At 1920×1080 on the S640, 50% is approximately 76.2×42.9 mm. The resizable, maximizable window realigns controls as it grows and enforces a minimum size to prevent collisions. Its WinUI 3-inspired dark palette and Segoe UI controls use native Windows drawing to keep the UI lightweight. The Settings button opens native preferences, including a persisted “Close to system tray” option that is enabled by default, with tray Open and Exit commands.
@@ -28,7 +28,7 @@ Simulation never opens/initializes the tablet or injects pointer events. The nat
 For physical tablet use, close other tablet drivers normally first to avoid competing cursor output, then launch:
 
 ```powershell
-./target/release/otd-rust-ui.exe
+./target/release/rust-tablet.exe
 ```
 
 The physical driver starts **stopped**. Detect only queries matching HID collections. Start sends the S640 initialization report and enables absolute mouse output; Stop releases held buttons and closes the device. Closing the panel stops the engine unless “Close to system tray” is enabled; use the tray icon’s Exit command to stop the driver in that mode. This milestone does not install startup services or change the existing driver installation.

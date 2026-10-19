@@ -53,6 +53,7 @@ const CLIP: usize = 300;
 const LIMIT: usize = 301;
 const TRAY_CALLBACK: u32 = WM_APP + 1;
 const TRAY_ICON_ID: u32 = 1;
+const APP_ICON_RESOURCE: *const u16 = 101 as *const u16;
 const TBM_GETPOS: u32 = WM_USER;
 
 struct Ui {
@@ -274,8 +275,8 @@ impl Ui {
             if install {
                 data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
                 data.uCallbackMessage = TRAY_CALLBACK;
-                data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
-                let tip: Vec<u16> = w("OpenTabletDriver Rust — VEIKK S640")
+                data.hIcon = LoadIconW(GetModuleHandleW(null()), APP_ICON_RESOURCE);
+                let tip: Vec<u16> = w("Rust Tablet — VEIKK S640")
                     .into_iter()
                     .take(data.szTip.len() - 1)
                     .collect();
@@ -300,7 +301,7 @@ impl Ui {
                 SetForegroundWindow(self.settings_window);
                 return Ok(());
             }
-            let class = w("OpenTabletDriverRustPanel");
+            let class = w("RustTabletPanel");
             let window = CreateWindowExW(
                 WS_EX_TOOLWINDOW,
                 class.as_ptr(),
@@ -510,7 +511,7 @@ impl Ui {
         self.control(
             hwnd,
             "STATIC",
-            "OpenTabletDriver  ·  ALPHA BUILD",
+            "Rust Tablet  ·  ALPHA BUILD",
             0,
             0,
             [24, 18, 670, 24],
@@ -1149,12 +1150,7 @@ unsafe fn show_tray_menu(hwnd: HWND) {
         if menu.is_null() {
             return;
         }
-        AppendMenuW(
-            menu,
-            MF_STRING,
-            TRAY_OPEN,
-            w("Open OpenTabletDriver Rust").as_ptr(),
-        );
+        AppendMenuW(menu, MF_STRING, TRAY_OPEN, w("Open Rust Tablet").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         AppendMenuW(menu, MF_STRING, TRAY_EXIT, w("Exit").as_ptr());
         let mut point: POINT = zeroed();
@@ -1381,11 +1377,12 @@ pub fn run(
         }
         let scale = GetDpiForSystem() as f32 / 96.0;
         let instance = GetModuleHandleW(null());
-        let class = w("OpenTabletDriverRustPanel");
+        let class = w("RustTabletPanel");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            hIcon: LoadIconW(instance, APP_ICON_RESOURCE),
             hbrBackground: (COLOR_WINDOW + 1) as HBRUSH,
             lpszClassName: class.as_ptr(),
             ..zeroed()
@@ -1404,7 +1401,7 @@ pub fn run(
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),
-            w("OpenTabletDriver Rust — S640 alpha").as_ptr(),
+            w("Rust Tablet — S640 alpha").as_ptr(),
             window_style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,

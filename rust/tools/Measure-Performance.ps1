@@ -11,7 +11,7 @@ if (-not $SkipBuild) {
     } finally { Pop-Location }
 }
 $cli = Join-Path $root 'target/release/otd-rust.exe'
-$gui = Join-Path $root 'target/release/otd-rust-ui.exe'
+$gui = Join-Path $root 'target/release/rust-tablet.exe'
 $baseline = @(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -in @('OpenTabletDriver.Daemon','OpenTabletDriver.UX.Wpf') | ForEach-Object {
     @{ name=$_.ProcessName; pid=$_.Id; working_set_bytes=$_.WorkingSet64; private_bytes=$_.PrivateMemorySize64 }
 })
