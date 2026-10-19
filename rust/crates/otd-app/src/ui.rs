@@ -172,7 +172,7 @@ impl Ui {
                     parent,
                     null(),
                     null_mut(),
-                    RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+                    RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
                 );
             }
         }
@@ -427,12 +427,16 @@ impl Ui {
                 if window_rect.left < -10_000 {
                     // Keep automated transition checks offscreen while exercising
                     // maximize-sized, restored, and minimize/restore layouts.
-                    for (index, (width, height)) in
-                        [(1100.0, 900.0), (820.0, 820.0), (1100.0, 900.0)]
-                            .into_iter()
-                            .enumerate()
+                    for (index, (width, height)) in [
+                        (1920.0, 1080.0),
+                        (1100.0, 900.0),
+                        (820.0, 820.0),
+                        (1920.0, 1080.0),
+                    ]
+                    .into_iter()
+                    .enumerate()
                     {
-                        if index == 1 {
+                        if index == 2 {
                             unsafe { SendMessageW(hwnd, WM_SIZE, SIZE_MINIMIZED as usize, 0) };
                         }
                         unsafe {
@@ -971,6 +975,17 @@ unsafe fn draw_tablet_geometry(dc: HDC, ui: &Ui, offset: POINT) {
     // and released before returning.
     unsafe {
         let scaled = |value: i32| (value as f32 * ui.scale).round() as i32;
+        // The tablet preview belongs to the left-hand preview panel. Keep its
+        // geometry clipped there when the window grows, so it cannot paint over
+        // controls in the settings column.
+        let preview = RECT {
+            left: (24.0 * ui.scale * ui.layout_x).round() as i32 + offset.x,
+            top: (260.0 * ui.scale * ui.layout_y).round() as i32 + offset.y,
+            right: (350.0 * ui.scale * ui.layout_x).round() as i32 + offset.x,
+            bottom: (490.0 * ui.scale * ui.layout_y).round() as i32 + offset.y,
+        };
+        let saved = SaveDC(dc);
+        IntersectClipRect(dc, preview.left, preview.top, preview.right, preview.bottom);
         let shape_scale = ui.layout_x.min(ui.layout_y);
         let center_x = (187.5 * ui.scale * ui.layout_x).round() as i32 + offset.x;
         let center_y = (383.0 * ui.scale * ui.layout_y).round() as i32 + offset.y;
@@ -1057,6 +1072,7 @@ unsafe fn draw_tablet_geometry(dc: HDC, ui: &Ui, offset: POINT) {
         FrameRect(dc, &tablet, border);
         DeleteObject(surface);
         DeleteObject(border);
+        RestoreDC(dc, saved);
     }
 }
 
