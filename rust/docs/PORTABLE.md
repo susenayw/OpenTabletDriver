@@ -1,4 +1,6 @@
-# Rust Tablet / S640 Windows pre-release
+# Rust Tablet 0.0.100 alpha / S640 Windows pre-release
+
+Rust Tablet is a forked Rust migration of [OpenTabletDriver](https://github.com/OpenTabletDriver/OpenTabletDriver).
 
 `rust-tablet.exe` opens the native control panel. The driver starts stopped.
 

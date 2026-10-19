@@ -1,4 +1,7 @@
-param([switch] $SkipBuild)
+param(
+    [switch] $SkipBuild,
+    [string] $Version = '0.0.100'
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 if (-not $SkipBuild) {
@@ -8,7 +11,7 @@ if (-not $SkipBuild) {
         if ($LASTEXITCODE -ne 0) { throw 'Release build failed' }
     } finally { Pop-Location }
 }
-$folder = Join-Path $root 'artifacts/RustTablet-S640-win-x64'
+$folder = Join-Path $root "artifacts/RustTablet-$Version-alpha-S640-win-x64"
 New-Item -ItemType Directory -Force $folder | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'target/release/otd-rust.exe'),(Join-Path $root 'target/release/rust-tablet.exe') -Destination $folder
 Copy-Item -LiteralPath (Join-Path $root '../LICENSE') -Destination $folder
@@ -18,6 +21,6 @@ Copy-Item -LiteralPath (Join-Path $root 'docs/PERFORMANCE.md'),(Join-Path $root 
 @echo off
 start "Rust Tablet demo" "%~dp0rust-tablet.exe" --simulate
 '@ | Set-Content -LiteralPath (Join-Path $folder 'Launch-Demo.cmd') -Encoding ascii
-$zip = Join-Path $root 'artifacts/RustTablet-S640-win-x64.zip'
+$zip = Join-Path $root "artifacts/RustTablet-$Version-alpha-S640-win-x64.zip"
 Compress-Archive -Path (Join-Path $folder '*') -DestinationPath $zip -Force
 Get-FileHash -LiteralPath $zip -Algorithm SHA256 | Format-List Path,Hash

@@ -1,6 +1,6 @@
-# Rust Tablet pre-release · VEIKK S640
+# Rust Tablet 0.0.100 alpha · VEIKK S640
 
-> **Pre-release software for Windows x64. Currently supports the VEIKK S640 only.** Other tablet models are not supported. This early Rust app is separate from the established OpenTabletDriver builds and is not a replacement for them.
+> **Alpha pre-release 0.0.100 for Windows x64. Currently supports the VEIKK S640 only.** Other tablet models are not supported. Rust Tablet is a forked Rust migration of [OpenTabletDriver](https://github.com/OpenTabletDriver/OpenTabletDriver), and is not a replacement for the established OpenTabletDriver builds.
 
 This is a runnable Rust migration milestone inside the existing repository, with a total-process memory budget of **less than 50,000,000 bytes** for working set and private committed memory.
 
