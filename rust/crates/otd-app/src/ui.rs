@@ -162,7 +162,17 @@ impl Ui {
                     (y as f32 * self.scale * sy).round() as i32,
                     (width as f32 * self.scale * sx).round().max(1.0) as i32,
                     (height as f32 * self.scale * sy).round().max(1.0) as i32,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
+                );
+            }
+        }
+        if parent == self.main_window {
+            unsafe {
+                RedrawWindow(
+                    parent,
+                    null(),
+                    null_mut(),
+                    RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
                 );
             }
         }
@@ -415,21 +425,30 @@ impl Ui {
                 let mut window_rect: RECT = unsafe { zeroed() };
                 unsafe { GetWindowRect(hwnd, &mut window_rect) };
                 if window_rect.left < -10_000 {
-                    // The automated UI run stays offscreen while exercising the same
-                    // resize path used by a maximized window.
-                    unsafe {
-                        SetWindowPos(
-                            hwnd,
-                            null_mut(),
-                            window_rect.left,
-                            window_rect.top,
-                            (1100.0 * self.scale).round() as i32,
-                            (900.0 * self.scale).round() as i32,
-                            SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
+                    // Keep automated transition checks offscreen while exercising
+                    // maximize-sized, restored, and minimize/restore layouts.
+                    for (index, (width, height)) in
+                        [(1100.0, 900.0), (820.0, 820.0), (1100.0, 900.0)]
+                            .into_iter()
+                            .enumerate()
+                    {
+                        if index == 1 {
+                            unsafe { SendMessageW(hwnd, WM_SIZE, SIZE_MINIMIZED as usize, 0) };
+                        }
+                        unsafe {
+                            SetWindowPos(
+                                hwnd,
+                                null_mut(),
+                                window_rect.left,
+                                window_rect.top,
+                                (width * self.scale).round() as i32,
+                                (height * self.scale).round() as i32,
+                                SWP_NOZORDER | SWP_NOACTIVATE,
+                            );
+                        }
+                        self.validate_child_bounds(hwnd)?;
                     }
                 }
-                self.layout_children(hwnd);
                 self.validate_child_bounds(hwnd)?;
                 self.close_at = Some(Instant::now() + Duration::from_millis(500));
             }
