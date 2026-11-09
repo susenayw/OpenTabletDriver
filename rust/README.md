@@ -1,12 +1,14 @@
-# Rust Tablet 0.0.100 alpha · VEIKK S640
+# Rust Tablet 0.0.101 alpha · VEIKK S640
 
-> **Alpha pre-release 0.0.100 for Windows x64. Currently supports the VEIKK S640 only.** Other tablet models are not supported. Rust Tablet is a forked Rust migration of [OpenTabletDriver](https://github.com/OpenTabletDriver/OpenTabletDriver), and is not a replacement for the established OpenTabletDriver builds.
+> **Alpha pre-release 0.0.101 for Windows x64. Currently supports the VEIKK S640 only.** Other tablet models are not supported. Rust Tablet is a forked Rust migration of [OpenTabletDriver](https://github.com/OpenTabletDriver/OpenTabletDriver), and is not a replacement for the established OpenTabletDriver builds.
 
 This is a runnable Rust migration milestone inside the existing repository, with a total-process memory budget of **less than 50,000,000 bytes** for working set and private committed memory.
 
 The upstream tablet configuration and parser source trees are retained as migration references; the Rust app currently embeds and uses only the VEIKK S640 definition. Their presence does not imply support for those other models. The S640 parser is ported from its corresponding upstream C# source. No .NET runtime, WebView, browser renderer, or external HID library is required by the Rust executables.
 
 ![Rust Tablet S640 pre-release app with tablet scale set to 50%](docs/images/veikk-s640-rust-alpha.png)
+
+![Settings showing the optional Windows Ink output](docs/images/windows-ink-settings-0.0.101.png)
 
 ## Run
 
@@ -31,7 +33,7 @@ For physical tablet use, close other tablet drivers normally first to avoid comp
 ./target/release/rust-tablet.exe
 ```
 
-The physical driver starts **stopped**. Detect only queries matching HID collections. Start sends the S640 initialization report and enables absolute mouse output; Stop releases held buttons and closes the device. Closing the panel stops the engine unless “Close to system tray” is enabled; use the tray icon’s Exit command to stop the driver in that mode. This milestone does not install startup services or change the existing driver installation.
+The physical driver starts **stopped**. Detect only queries matching HID collections. Start sends the S640 initialization report and enables the selected output; Stop releases held buttons/contact and closes the device. In Settings, switch between standard mouse output (default) and **Windows Ink**. Ink mode injects a synthetic Windows pen with pressure and contact transitions using Windows' native pointer API; it requires Windows 10 version 1809 or later, and apps that block injected input may ignore it. The S640 reports no tilt data. Closing the panel stops the engine unless “Close to system tray” is enabled; use the tray icon’s Exit command to stop the driver in that mode. This milestone does not install startup services or change the existing driver installation.
 
 Console diagnostics:
 
@@ -43,7 +45,7 @@ New-Item -ItemType Directory -Force ./artifacts | Out-Null
 ./target/release/otd-rust.exe --benchmark --iterations 1000000
 ```
 
-`--probe` opens a read-only handle and observes packets without sending initialization or OS pointer events. The tablet must already be sending the supported reports, for example through the existing driver. `--run --headless` explicitly starts physical input and mouse output. Ctrl+C stops the console engine and releases held buttons. `--seconds N` gives a bounded run.
+`--probe` opens a read-only handle and observes packets without sending initialization or OS pointer events. The tablet must already be sending the supported reports, for example through the existing driver. `--run --headless` explicitly starts physical input and the selected output mode from settings. Ctrl+C stops the console engine and releases held buttons/contact. `--seconds N` gives a bounded run.
 
 ## Memory and response design
 
@@ -66,7 +68,7 @@ cargo test --workspace --locked
 ./tools/Measure-Performance.ps1 -Seconds 15
 ```
 
-The measurement script runs release binaries with native UI controls rendered offscreen, samples peak working set/private memory, and fails above 50 MB. It also verifies zero allocations in the core benchmark and exercises actual native UI Apply/Stop/Start/Save notifications, invalid-area validation, and the 50% scale calculation. It does not trim the working set. Synthetic input does not test USB or `SendInput` latency.
+The measurement script runs release binaries with native UI controls rendered offscreen, samples peak working set/private memory, and fails above 50 MB. It also verifies zero allocations in the core benchmark and exercises actual native UI Apply/Stop/Start/Save notifications, invalid-area validation, and the 50% scale calculation. It does not trim the working set. Synthetic input does not test USB, `SendInput`, or Windows Ink delivery latency.
 
 `tools/Generate-UpstreamFixtures.ps1` compiles the actual upstream C# parser source with interface-only stubs to generate 2,048 deterministic fixtures. The Rust test compares complete decoded reports against those results. Run that generator in a fresh PowerShell process. These are generated test packets, not an exhaustive hardware corpus.
 
@@ -74,7 +76,7 @@ See [measurement notes](docs/PERFORMANCE.md), [migration scope](docs/MIGRATION.m
 
 ## Current limits
 
-Windows x64 and VEIKK S640 only, with absolute mouse output. The pen pressure value is decoded and shown, but pressure/tilt injection into drawing applications is not implemented. Auxiliary packets are decoded but auxiliary bindings are not implemented. Relative mode, plugin loading, other tablet models, Linux/macOS, upstream settings import, installer/updater, and a polished accessible UI remain pending.
+Windows x64 and VEIKK S640 only. Mouse output remains the default; optional Windows Ink mode sends injected pressure-aware pen events, but app compatibility and end-to-end drawing behavior still need hardware testing. Tilt injection is unavailable because the current S640 parser does not decode tilt. Auxiliary packets are decoded but auxiliary bindings are not implemented. Relative mode, plugin loading, other tablet models, Linux/macOS, upstream settings import, installer/updater, and a polished accessible UI remain pending.
 
 Live read-only S640 input was verified alongside the existing driver. Physical initialization and cursor/button injection are implemented but were not exercised in this session, to avoid competing with the user's active driver. Do not interpret the small prototype memory footprint as a guarantee for future feature parity or a WebView UI.
 

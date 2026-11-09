@@ -1,7 +1,7 @@
 //! Native control shell. Layout is intentionally provisional until the HTML mockup.
 //! No browser engine/GPU rendering loop; telemetry is refreshed at 4 Hz.
 use crate::engine::{Command, Engine};
-use otd_core::{DisplayRect, MouseBinding, Settings};
+use otd_core::{DisplayRect, MouseBinding, OutputMode, Settings};
 use std::{
     ffi::OsStr,
     io,
@@ -51,6 +51,7 @@ const TRAY_OPEN: usize = 304;
 const TRAY_EXIT: usize = 305;
 const CLIP: usize = 300;
 const LIMIT: usize = 301;
+const OUTPUT_MODE: usize = 306;
 const TRAY_CALLBACK: u32 = WM_APP + 1;
 const TRAY_ICON_ID: u32 = 1;
 const APP_ICON_RESOURCE: *const u16 = 101 as *const u16;
@@ -79,6 +80,7 @@ struct Ui {
     settings: Settings,
     settings_window: HWND,
     close_to_tray: HWND,
+    output_mode: HWND,
     tray_added: bool,
     background_brush: HBRUSH,
     input_brush: HBRUSH,
@@ -141,7 +143,7 @@ impl Ui {
         let (base_width, base_height) = if parent == self.main_window {
             (740.0, 760.0)
         } else {
-            (340.0, 170.0)
+            (400.0, 265.0)
         };
         let sx = (client.right as f32 / (base_width * self.scale)).max(0.1);
         let sy = (client.bottom as f32 / (base_height * self.scale)).max(0.1);
@@ -302,15 +304,23 @@ impl Ui {
                 return Ok(());
             }
             let class = w("RustTabletPanel");
+            let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+            let mut frame = RECT {
+                left: 0,
+                top: 0,
+                right: (400.0 * self.scale) as i32,
+                bottom: (265.0 * self.scale) as i32,
+            };
+            AdjustWindowRectEx(&mut frame, style, 0, WS_EX_TOOLWINDOW);
             let window = CreateWindowExW(
                 WS_EX_TOOLWINDOW,
                 class.as_ptr(),
                 w("Settings").as_ptr(),
-                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+                style,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                (340.0 * self.scale) as i32,
-                (170.0 * self.scale) as i32,
+                frame.right - frame.left,
+                frame.bottom - frame.top,
                 parent,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -322,13 +332,30 @@ impl Ui {
             apply_window_chrome(window);
             self.settings_window = window;
             SetWindowLongPtrW(window, GWLP_USERDATA, self as *mut Ui as isize);
+            self.control(window, "STATIC", "Pointer output", 0, 0, [18, 16, 300, 22]);
+            self.output_mode = self.control(
+                window,
+                "COMBOBOX",
+                "",
+                WS_TABSTOP | CBS_DROPDOWNLIST as u32 | WS_VSCROLL,
+                OUTPUT_MODE,
+                [18, 42, 364, 120],
+            );
+            for option in ["Mouse (standard)", "Windows Ink (pressure pen)"] {
+                SendMessageW(
+                    self.output_mode,
+                    CB_ADDSTRING,
+                    0,
+                    w(option).as_ptr() as isize,
+                );
+            }
             self.control(
                 window,
                 "STATIC",
-                "Application behavior",
+                "Pressure-aware pen input (Windows 10 1809+).\r\nSome apps may ignore injected pen input.",
                 0,
                 0,
-                [18, 16, 280, 22],
+                [18, 80, 364, 48],
             );
             self.close_to_tray = self.control(
                 window,
@@ -336,15 +363,15 @@ impl Ui {
                 "Close to system tray",
                 WS_TABSTOP | BS_AUTOCHECKBOX as u32,
                 CLOSE_TO_TRAY,
-                [18, 48, 280, 25],
+                [18, 137, 364, 26],
             );
             self.control(
                 window,
                 "STATIC",
-                "Keep the driver running when this window closes.",
+                "Keep the driver running when closed.",
                 0,
                 0,
-                [38, 75, 275, 22],
+                [38, 168, 344, 26],
             );
             self.control(
                 window,
@@ -352,7 +379,13 @@ impl Ui {
                 "Done",
                 WS_TABSTOP,
                 SETTINGS_DONE,
-                [220, 105, 90, 28],
+                [282, 215, 100, 30],
+            );
+            SendMessageW(
+                self.output_mode,
+                CB_SETCURSEL,
+                usize::from(self.settings.output_mode == OutputMode::WindowsInk),
+                0,
             );
             SendMessageW(
                 self.close_to_tray,
@@ -769,6 +802,14 @@ impl Ui {
                 };
                 SendMessageW(*h, CB_SETCURSEL, i, 0);
             }
+            if !self.output_mode.is_null() {
+                SendMessageW(
+                    self.output_mode,
+                    CB_SETCURSEL,
+                    usize::from(s.output_mode == OutputMode::WindowsInk),
+                    0,
+                );
+            }
         }
     }
 
@@ -822,6 +863,26 @@ impl Ui {
     fn action(&mut self, id: usize) -> Result<(), String> {
         match id {
             SETTINGS => self.open_settings(self.main_window)?,
+            OUTPUT_MODE => {
+                let selected = unsafe { SendMessageW(self.output_mode, CB_GETCURSEL, 0, 0) };
+                let mut candidate = self.settings.clone();
+                candidate.output_mode = if selected == 1 {
+                    OutputMode::WindowsInk
+                } else {
+                    OutputMode::Mouse
+                };
+                self.engine.command(Command::Save(candidate.clone()))?;
+                self.settings = candidate;
+                text(
+                    self.status,
+                    match self.settings.output_mode {
+                        OutputMode::Mouse => "Mouse output selected and saved.",
+                        OutputMode::WindowsInk => {
+                            "Windows Ink selected and saved. Start the driver to send pen input."
+                        }
+                    },
+                );
+            }
             CLOSE_TO_TRAY => {
                 // The preference is saved immediately so the next launch behaves the same.
                 let enabled = unsafe { SendMessageW(self.close_to_tray, BM_GETCHECK, 0, 0) != 0 };
@@ -918,8 +979,18 @@ impl Ui {
         Ok(())
     }
 
-    fn refresh(&self) {
+    fn refresh(&mut self) {
         let s = self.engine.read();
+        if !self.output_mode.is_null() {
+            let selected = usize::from(s.settings.output_mode == OutputMode::WindowsInk);
+            // Only synchronize the output selector; unrelated editor fields may be unsaved.
+            unsafe {
+                if SendMessageW(self.output_mode, CB_GETCURSEL, 0, 0) != selected as isize {
+                    SendMessageW(self.output_mode, CB_SETCURSEL, selected, 0);
+                    self.settings.output_mode = s.settings.output_mode;
+                }
+            }
+        }
         text(
             self.status,
             &format!(
@@ -947,9 +1018,13 @@ impl Ui {
             text(
                 self.footer,
                 &format!(
-                    "RAM: {:.1} MB working set / {:.1} MB private (50 MB limit)\r\nMouse output only · pressure injection pending",
+                    "RAM: {:.1} MB working set / {:.1} MB private (50 MB limit)\r\n{}",
                     memory.working_set_bytes as f64 / 1_000_000.0,
-                    memory.private_bytes as f64 / 1_000_000.0
+                    memory.private_bytes as f64 / 1_000_000.0,
+                    match s.settings.output_mode {
+                        OutputMode::Mouse => "Mouse output · pressure injection unavailable",
+                        OutputMode::WindowsInk => "Windows Ink output · pressure enabled",
+                    }
                 ),
             );
         }
@@ -1226,6 +1301,19 @@ unsafe extern "system" fn window_proc(
                 return result;
             }
             match message {
+                WM_COMMAND if (wparam >> 16) & 0xffff == CBN_SELCHANGE as usize => {
+                    if wparam & 0xffff == OUTPUT_MODE
+                        && let Err(e) = ui.action(OUTPUT_MODE)
+                    {
+                        MessageBoxW(
+                            hwnd,
+                            w(&e).as_ptr(),
+                            w("Settings / driver error").as_ptr(),
+                            MB_OK | MB_ICONERROR,
+                        );
+                    }
+                    return 0;
+                }
                 WM_COMMAND if wparam >> 16 == 0 => {
                     if let Err(e) = ui.action(wparam & 0xffff) {
                         MessageBoxW(
@@ -1345,8 +1433,10 @@ unsafe extern "system" fn window_proc(
                         DeleteObject(ui.font);
                         PostQuitMessage(0);
                     } else if hwnd == ui.settings_window {
+                        ui.controls.retain(|control| control.parent != hwnd);
                         ui.settings_window = null_mut();
                         ui.close_to_tray = null_mut();
+                        ui.output_mode = null_mut();
                     }
                     return 0;
                 }
@@ -1454,6 +1544,7 @@ pub fn run(
             settings,
             settings_window: null_mut(),
             close_to_tray: null_mut(),
+            output_mode: null_mut(),
             tray_added: false,
             background_brush: CreateSolidBrush(0x00101010),
             input_brush: CreateSolidBrush(0x001d1d1d),

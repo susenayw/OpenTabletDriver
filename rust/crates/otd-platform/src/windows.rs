@@ -1,8 +1,8 @@
-use otd_core::{DisplayRect, MappedReport, Variant};
+use otd_core::{DisplayRect, MappedReport, OutputMode, Variant};
 use std::{
     ffi::OsStr,
     io,
-    mem::{size_of, zeroed},
+    mem::{size_of, transmute_copy, zeroed},
     os::windows::ffi::OsStrExt,
     path::Path,
     ptr::{null, null_mut},
@@ -11,8 +11,15 @@ use windows_sys::Win32::{
     Devices::{DeviceAndDriverInstallation::*, HumanInterfaceDevice::*},
     Foundation::*,
     Storage::FileSystem::*,
-    System::{Console::*, IO::*, ProcessStatus::*, Threading::*},
-    UI::{Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+    System::{Console::*, IO::*, LibraryLoader::*, ProcessStatus::*, Threading::*},
+    UI::{
+        Controls::{
+            HSYNTHETICPOINTERDEVICE, POINTER_FEEDBACK_MODE, POINTER_FEEDBACK_NONE,
+            POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
+        },
+        Input::{KeyboardAndMouse::*, Pointer::*},
+        WindowsAndMessaging::*,
+    },
 };
 
 pub fn wide(s: &OsStr) -> Vec<u16> {
@@ -420,78 +427,329 @@ impl Drop for TabletDevice {
     }
 }
 
+enum OutputBackend {
+    Mouse { buttons: u8 },
+    WindowsInk(InkOutput),
+}
+
+impl OutputBackend {
+    fn new(mode: OutputMode) -> io::Result<Self> {
+        match mode {
+            OutputMode::Mouse => Ok(Self::Mouse { buttons: 0 }),
+            OutputMode::WindowsInk => InkOutput::new().map(Self::WindowsInk),
+        }
+    }
+
+    fn mode(&self) -> OutputMode {
+        match self {
+            Self::Mouse { .. } => OutputMode::Mouse,
+            Self::WindowsInk(_) => OutputMode::WindowsInk,
+        }
+    }
+
+    fn emit(&mut self, report: MappedReport, desktop: DisplayRect) -> io::Result<()> {
+        match self {
+            Self::Mouse { buttons } => {
+                let x = ((report.x - desktop.x as f32)
+                    / (desktop.width.saturating_sub(1).max(1) as f32)
+                    * 65535.0)
+                    .clamp(0.0, 65535.0)
+                    .round() as i32;
+                let y = ((report.y - desktop.y as f32)
+                    / (desktop.height.saturating_sub(1).max(1) as f32)
+                    * 65535.0)
+                    .clamp(0.0, 65535.0)
+                    .round() as i32;
+                mouse_send(buttons, x, y, report.buttons, true)
+            }
+            Self::WindowsInk(ink) => ink.emit(report, desktop),
+        }
+    }
+
+    fn reset(&mut self) -> io::Result<()> {
+        match self {
+            Self::Mouse { buttons } => mouse_send(buttons, 0, 0, 0, false),
+            Self::WindowsInk(ink) => ink.reset(),
+        }
+    }
+}
+
 pub struct PointerOutput {
-    buttons: u8,
+    backend: OutputBackend,
     desktop: DisplayRect,
 }
 impl Default for PointerOutput {
     fn default() -> Self {
         Self {
-            buttons: 0,
+            backend: OutputBackend::Mouse { buttons: 0 },
             desktop: virtual_desktop(),
         }
     }
 }
 impl PointerOutput {
+    pub fn with_mode(mode: OutputMode) -> io::Result<Self> {
+        let mut output = Self::default();
+        output.set_mode(mode)?;
+        Ok(output)
+    }
+    pub fn mode(&self) -> OutputMode {
+        self.backend.mode()
+    }
+    pub fn set_mode(&mut self, mode: OutputMode) -> io::Result<()> {
+        if self.mode() == mode {
+            return Ok(());
+        }
+        // Construct first, so an unsupported Windows version leaves the current
+        // output active and never partially changes the selected backend.
+        let replacement = OutputBackend::new(mode)?;
+        self.reset()?;
+        self.backend = replacement;
+        Ok(())
+    }
     pub fn refresh_desktop(&mut self) {
         self.desktop = virtual_desktop();
     }
     pub fn emit(&mut self, report: MappedReport) -> io::Result<()> {
-        let d = self.desktop;
-        let x = ((report.x - d.x as f32) / (d.width.saturating_sub(1).max(1) as f32) * 65535.0)
-            .clamp(0.0, 65535.0)
-            .round() as i32;
-        let y = ((report.y - d.y as f32) / (d.height.saturating_sub(1).max(1) as f32) * 65535.0)
-            .clamp(0.0, 65535.0)
-            .round() as i32;
-        self.send(x, y, report.buttons, true)
-    }
-    fn send(&mut self, x: i32, y: i32, buttons: u8, movement: bool) -> io::Result<()> {
-        let mut flags = if movement {
-            MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK
-        } else {
-            0
-        };
-        for (mask, down, up) in [
-            (1, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
-            (2, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
-            (4, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
-        ] {
-            if (self.buttons ^ buttons) & mask != 0 {
-                flags |= if buttons & mask != 0 { down } else { up };
-            }
-        }
-        if flags == 0 {
-            return Ok(());
-        }
-        // SAFETY: correctly sized single INPUT with the mouse union member initialized.
-        unsafe {
-            let input = INPUT {
-                r#type: INPUT_MOUSE,
-                Anonymous: INPUT_0 {
-                    mi: MOUSEINPUT {
-                        dx: x,
-                        dy: y,
-                        mouseData: 0,
-                        dwFlags: flags,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            };
-            if SendInput(1, &input, size_of::<INPUT>() as i32) != 1 {
-                return Err(io::Error::last_os_error());
-            }
-        }
-        self.buttons = buttons;
-        Ok(())
+        self.backend.emit(report, self.desktop)
     }
     pub fn reset(&mut self) -> io::Result<()> {
-        self.send(0, 0, 0, false)
+        self.backend.reset()
     }
 }
 impl Drop for PointerOutput {
     fn drop(&mut self) {
         let _ = self.reset();
+    }
+}
+
+fn mouse_send(
+    current_buttons: &mut u8,
+    x: i32,
+    y: i32,
+    buttons: u8,
+    movement: bool,
+) -> io::Result<()> {
+    let mut flags = if movement {
+        MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK
+    } else {
+        0
+    };
+    for (mask, down, up) in [
+        (1, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        (2, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        (4, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+    ] {
+        if (*current_buttons ^ buttons) & mask != 0 {
+            flags |= if buttons & mask != 0 { down } else { up };
+        }
+    }
+    if flags == 0 {
+        return Ok(());
+    }
+    // SAFETY: correctly sized single INPUT with the mouse union member initialized.
+    unsafe {
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: x,
+                    dy: y,
+                    mouseData: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        };
+        if SendInput(1, &input, size_of::<INPUT>() as i32) != 1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    *current_buttons = buttons;
+    Ok(())
+}
+
+struct InkOutput {
+    device: HSYNTHETICPOINTERDEVICE,
+    inject: InjectSyntheticPointerInputFn,
+    destroy: DestroySyntheticPointerDeviceFn,
+    in_range: bool,
+    in_contact: bool,
+    last_point: POINT,
+}
+
+type CreateSyntheticPointerDeviceFn = unsafe extern "system" fn(
+    POINTER_INPUT_TYPE,
+    u32,
+    POINTER_FEEDBACK_MODE,
+) -> HSYNTHETICPOINTERDEVICE;
+type InjectSyntheticPointerInputFn =
+    unsafe extern "system" fn(HSYNTHETICPOINTERDEVICE, *const POINTER_TYPE_INFO, u32) -> i32;
+type DestroySyntheticPointerDeviceFn = unsafe extern "system" fn(HSYNTHETICPOINTERDEVICE);
+
+fn ink_api<T: Copy>(name: &'static [u8]) -> io::Result<T> {
+    let module_name = wide(OsStr::new("user32.dll"));
+    // SAFETY: user32 is loaded by this desktop app's other Win32 UI calls.
+    let module = unsafe { GetModuleHandleW(module_name.as_ptr()) };
+    if module.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: name is a static NUL-terminated ASCII export name.
+    let address = unsafe { GetProcAddress(module, name.as_ptr()) };
+    let Some(address) = address else {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Windows Ink output requires Windows 10 version 1809 or later",
+        ));
+    };
+    if size_of::<T>() != size_of_val(&address) {
+        return Err(io::Error::other("Unexpected Win32 function pointer size"));
+    }
+    // SAFETY: the caller supplies the ABI signature for this specific User32 export.
+    Ok(unsafe { transmute_copy(&address) })
+}
+
+impl InkOutput {
+    fn new() -> io::Result<Self> {
+        // Windows 10 version 1809+ desktop pointer injection; PT_PEN takes one contact.
+        let create: CreateSyntheticPointerDeviceFn = ink_api(b"CreateSyntheticPointerDevice\0")?;
+        let inject: InjectSyntheticPointerInputFn = ink_api(b"InjectSyntheticPointerInput\0")?;
+        let destroy: DestroySyntheticPointerDeviceFn = ink_api(b"DestroySyntheticPointerDevice\0")?;
+        let device = unsafe { create(PT_PEN, 1, POINTER_FEEDBACK_NONE) };
+        if device.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self {
+            device,
+            inject,
+            destroy,
+            in_range: false,
+            in_contact: false,
+            last_point: POINT { x: 0, y: 0 },
+        })
+    }
+
+    fn emit(&mut self, report: MappedReport, desktop: DisplayRect) -> io::Result<()> {
+        let point = POINT {
+            x: (report.x - desktop.x as f32).round() as i32,
+            y: (report.y - desktop.y as f32).round() as i32,
+        };
+        let contact = report.pressure > 0.0;
+        let flags = ink_pointer_flags(self.in_range, self.in_contact, contact);
+        self.inject(point, flags, report.pressure, report.pen_buttons != 0)?;
+        self.last_point = point;
+        self.in_range = true;
+        self.in_contact = contact;
+        Ok(())
+    }
+
+    fn inject(&self, point: POINT, flags: u32, pressure: f32, barrel: bool) -> io::Result<()> {
+        let info = POINTER_TYPE_INFO {
+            r#type: PT_PEN,
+            Anonymous: POINTER_TYPE_INFO_0 {
+                penInfo: POINTER_PEN_INFO {
+                    pointerInfo: POINTER_INFO {
+                        pointerType: PT_PEN,
+                        pointerId: 1,
+                        pointerFlags: flags,
+                        ptPixelLocation: point,
+                        ptPixelLocationRaw: point,
+                        ..Default::default()
+                    },
+                    penFlags: if barrel {
+                        PEN_FLAG_BARREL
+                    } else {
+                        PEN_FLAG_NONE
+                    },
+                    penMask: PEN_MASK_PRESSURE,
+                    pressure: (pressure.clamp(0.0, 1.0) * 1024.0).round() as u32,
+                    ..Default::default()
+                },
+            },
+        };
+        // SAFETY: one initialized PT_PEN record is passed to the matching live device.
+        if unsafe { (self.inject)(self.device, &info, 1) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn reset(&mut self) -> io::Result<()> {
+        if !self.in_range {
+            return Ok(());
+        }
+        self.inject(
+            self.last_point,
+            POINTER_FLAG_UP | POINTER_FLAG_PRIMARY,
+            0.0,
+            false,
+        )?;
+        self.in_range = false;
+        self.in_contact = false;
+        Ok(())
+    }
+}
+
+fn ink_pointer_flags(in_range: bool, in_contact: bool, contact: bool) -> u32 {
+    let mut flags = POINTER_FLAG_INRANGE | POINTER_FLAG_PRIMARY;
+    if !in_range {
+        flags |= POINTER_FLAG_NEW;
+    }
+    if contact {
+        flags |= POINTER_FLAG_INCONTACT | POINTER_FLAG_FIRSTBUTTON;
+        flags |= if in_contact {
+            POINTER_FLAG_UPDATE
+        } else {
+            POINTER_FLAG_DOWN
+        };
+    } else {
+        flags |= if in_contact {
+            POINTER_FLAG_UP
+        } else {
+            POINTER_FLAG_UPDATE
+        };
+    }
+    flags
+}
+
+impl Drop for InkOutput {
+    fn drop(&mut self) {
+        let _ = self.reset();
+        // SAFETY: this instance exclusively owns its synthetic pointer device.
+        unsafe { (self.destroy)(self.device) };
+    }
+}
+
+#[cfg(test)]
+mod ink_tests {
+    use super::*;
+
+    #[test]
+    fn pen_contact_state_emits_hover_down_move_up_flags() {
+        assert_eq!(
+            ink_pointer_flags(false, false, false),
+            POINTER_FLAG_NEW | POINTER_FLAG_INRANGE | POINTER_FLAG_PRIMARY | POINTER_FLAG_UPDATE
+        );
+        assert_eq!(
+            ink_pointer_flags(true, false, true),
+            POINTER_FLAG_INRANGE
+                | POINTER_FLAG_PRIMARY
+                | POINTER_FLAG_INCONTACT
+                | POINTER_FLAG_FIRSTBUTTON
+                | POINTER_FLAG_DOWN
+        );
+        assert_eq!(
+            ink_pointer_flags(true, true, true),
+            POINTER_FLAG_INRANGE
+                | POINTER_FLAG_PRIMARY
+                | POINTER_FLAG_INCONTACT
+                | POINTER_FLAG_FIRSTBUTTON
+                | POINTER_FLAG_UPDATE
+        );
+        assert_eq!(
+            ink_pointer_flags(true, true, false),
+            POINTER_FLAG_INRANGE | POINTER_FLAG_PRIMARY | POINTER_FLAG_UP
+        );
     }
 }

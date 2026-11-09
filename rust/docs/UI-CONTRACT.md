@@ -10,7 +10,7 @@ The native UI should cover:
 - Monitor mapping with negative monitor origins and physical pixels.
 - Tip threshold and tip/pen mouse bindings.
 - Apply separately from Apply and save, with failure feedback and unsaved-change state.
-- Read-only pressure/position test visualization, clearly separated from pressure injection support.
+- Selectable standard mouse or Windows Ink pressure-aware synthetic pen output; mouse remains the default.
 - Memory, rate, processing telemetry, and bounded diagnostic history.
 - Keyboard navigation, proper labels, scaling, and readable error messages.
 

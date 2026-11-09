@@ -1,4 +1,4 @@
-# Rust Tablet 0.0.100 alpha / S640 Windows pre-release
+# Rust Tablet 0.0.101 alpha / S640 Windows pre-release
 
 Rust Tablet is a forked Rust migration of [OpenTabletDriver](https://github.com/OpenTabletDriver/OpenTabletDriver).
 
@@ -8,7 +8,7 @@ Rust Tablet is a forked Rust migration of [OpenTabletDriver](https://github.com/
 
 For physical use, close the existing tablet driver normally first, launch `rust-tablet.exe`, check the mapping, and press Start. Stop or closing the panel releases buttons and closes the device. This prototype does not install itself or change the original driver settings.
 
-This Windows pre-release has been tested only with the VEIKK S640. Although the source includes an S640 V2 definition, that model is not validated for this build. Absolute mouse output is implemented; artist pressure injection, original .NET plugins, relative mode, other tablets, and platform parity remain pending. Live read-only S640 input has been verified. Independent initialization and physical pointer/button injection have not yet been exercised.
+This Windows pre-release has been tested only with the VEIKK S640. Although the source includes an S640 V2 definition, that model is not validated for this build. Mouse output is the default; Settings also offers Windows Ink output using synthetic pressure-aware pen events (Windows 10 1809+). Apps that block injected input may ignore it. Tilt, original .NET plugins, relative mode, other tablets, and platform parity remain pending. Live read-only S640 input has been verified. Independent initialization and physical pointer/button injection have not yet been exercised.
 
 `otd-rust.exe` is the console diagnostics executable; run it with `--help`. `PERFORMANCE.md` documents measured memory and timing scope. Memory measurements apply to this prototype's current feature set, not future parity.
 

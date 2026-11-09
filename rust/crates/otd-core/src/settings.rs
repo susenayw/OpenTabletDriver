@@ -28,6 +28,14 @@ pub enum MouseBinding {
     Middle,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputMode {
+    #[default]
+    Mouse,
+    WindowsInk,
+}
+
 impl MouseBinding {
     pub const fn mask(self) -> u8 {
         match self {
@@ -50,6 +58,8 @@ pub struct Settings {
     pub tip_threshold_percent: f32,
     pub tip_binding: MouseBinding,
     pub pen_bindings: [MouseBinding; 3],
+    #[serde(default)]
+    pub output_mode: OutputMode,
     #[serde(default = "close_to_tray_default")]
     pub close_to_tray: bool,
 }
@@ -84,6 +94,7 @@ impl Default for Settings {
                 MouseBinding::Middle,
                 MouseBinding::Disabled,
             ],
+            output_mode: OutputMode::Mouse,
             close_to_tray: true,
         }
     }
@@ -140,6 +151,7 @@ mod tests {
         let current = serde_json::to_string(&Settings::default()).unwrap();
         let parsed: Settings = serde_json::from_str(&current).unwrap();
         assert!(parsed.close_to_tray);
+        assert_eq!(parsed.output_mode, super::OutputMode::Mouse);
         assert_eq!(parsed.area.width_mm, 76.2);
         assert_eq!(parsed.area.height_mm, 42.9);
 
@@ -155,5 +167,21 @@ mod tests {
         let parsed: Settings =
             serde_json::from_str(&serde_json::to_string(&opted_out).unwrap()).unwrap();
         assert!(!parsed.close_to_tray);
+    }
+
+    #[test]
+    fn output_mode_roundtrips_and_older_settings_default_to_mouse() {
+        let settings = Settings {
+            output_mode: super::OutputMode::WindowsInk,
+            ..Settings::default()
+        };
+        let roundtrip: Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(roundtrip.output_mode, super::OutputMode::WindowsInk);
+
+        let mut older = serde_json::to_value(Settings::default()).unwrap();
+        older.as_object_mut().unwrap().remove("output_mode");
+        let older: Settings = serde_json::from_value(older).unwrap();
+        assert_eq!(older.output_mode, super::OutputMode::Mouse);
     }
 }

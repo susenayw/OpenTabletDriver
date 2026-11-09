@@ -8,6 +8,8 @@ pub struct MappedReport {
     pub pressure: f32,
     /// Left/right/middle logical mouse buttons. Multiple bindings are ORed.
     pub buttons: u8,
+    /// Raw stylus side-button bits, independent of their mouse-mode bindings.
+    pub pen_buttons: u8,
 }
 
 /// Precomputed affine mapping. No allocation, locks, trigonometry, or IO per report.
@@ -100,6 +102,7 @@ impl Mapper {
             y,
             pressure,
             buttons,
+            pen_buttons: pen.buttons,
         })
     }
 }
@@ -169,11 +172,15 @@ mod tests {
         };
         s.pen_bindings[0] = crate::MouseBinding::Left;
         let m = mapper(s);
-        assert_eq!(m.map(pen(0, 0, 4095)).unwrap().buttons, 0);
+        let hover = m.map(pen(0, 0, 4095)).unwrap();
+        assert_eq!(hover.buttons, 0);
+        assert_eq!(hover.pen_buttons, 0);
         let mut p = pen(0, 0, 8191);
         p.buttons = 1;
-        assert_eq!(m.map(p).unwrap().buttons, 1);
-        near(m.map(p).unwrap().pressure, 1.0);
+        let mapped = m.map(p).unwrap();
+        assert_eq!(mapped.buttons, 1);
+        assert_eq!(mapped.pen_buttons, 1);
+        near(mapped.pressure, 1.0);
     }
     #[test]
     fn invalid_settings_are_rejected_before_replacing_live_mapper() {

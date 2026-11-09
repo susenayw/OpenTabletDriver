@@ -1,6 +1,6 @@
 param(
     [switch] $SkipBuild,
-    [string] $Version = '0.0.100'
+    [string] $Version = '0.0.101'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot

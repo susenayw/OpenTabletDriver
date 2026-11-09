@@ -173,6 +173,15 @@ fn run(rx: Receiver<Command>, shared: Arc<Mutex<Snapshot>>, mut status: Snapshot
                     status.message = "Stopped; all mouse buttons released".into();
                 }
                 Command::Start => {
+                    if !status.simulation
+                        && let Err(error) = pointer.set_mode(status.settings.output_mode)
+                    {
+                        status.running = false;
+                        status.message =
+                            format!("Cannot initialize selected pointer output: {error}");
+                        publish(&shared, &status);
+                        continue;
+                    }
                     status.running = true;
                     next_detection = Instant::now();
                     next_tick = Instant::now();
@@ -201,6 +210,20 @@ fn run(rx: Receiver<Command>, shared: Arc<Mutex<Snapshot>>, mut status: Snapshot
                     match make_mapper(candidate.clone()) {
                         Err(e) => status.message = format!("Settings rejected: {e}"),
                         Ok(next) => {
+                            let replacement = if candidate.output_mode != pointer.mode() {
+                                match PointerOutput::with_mode(candidate.output_mode) {
+                                    Ok(output) => Some(output),
+                                    Err(error) => {
+                                        status.message = format!(
+                                            "Could not switch pointer output; previous settings remain active: {error}"
+                                        );
+                                        publish(&shared, &status);
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                None
+                            };
                             let result = if save {
                                 crate::persistence::save(&path, &candidate)
                             } else {
@@ -213,7 +236,11 @@ fn run(rx: Receiver<Command>, shared: Arc<Mutex<Snapshot>>, mut status: Snapshot
                                 }
                                 Ok(()) => {
                                     let _ = pointer.reset();
-                                    pointer.refresh_desktop();
+                                    if let Some(output) = replacement {
+                                        pointer = output;
+                                    } else {
+                                        pointer.refresh_desktop();
+                                    }
                                     mapper = next;
                                     status.settings = candidate;
                                     status.settings_revision += 1;
@@ -256,7 +283,14 @@ fn run(rx: Receiver<Command>, shared: Arc<Mutex<Snapshot>>, mut status: Snapshot
                                     status.tablet = format!("VEIKK {:?}", info.variant);
                                     device = Some(opened);
                                     status.connected = true;
-                                    status.message = "Connected: absolute mouse output (drawing pressure injection is not implemented)".into();
+                                    status.message = match status.settings.output_mode {
+                                        otd_core::OutputMode::Mouse => {
+                                            "Connected: absolute mouse output".into()
+                                        }
+                                        otd_core::OutputMode::WindowsInk => {
+                                            "Connected: Windows Ink pen output".into()
+                                        }
+                                    };
                                     break;
                                 }
                                 Err(e) => status.message = format!("Cannot initialize S640: {e}"),
@@ -348,7 +382,7 @@ fn run(rx: Receiver<Command>, shared: Arc<Mutex<Snapshot>>, mut status: Snapshot
                 device = None;
                 status.running = false;
                 status.connected = false;
-                status.message = format!("Pointer output failed; driver stopped: {e}");
+                status.message = format!("Selected pointer output failed; driver stopped: {e}");
                 publish(&shared, &status);
             }
         } else if limited {

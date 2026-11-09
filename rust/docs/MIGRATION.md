@@ -10,12 +10,12 @@ The current pre-release prioritizes the user's VEIKK S640 and the 50 MB process 
 | Pressure threshold and mouse bindings | `otd-core/mapping.rs` | Implemented; pressure remapping preserves integer truncation |
 | HID enumeration / report sizes | `otd-platform/windows.rs` SetupAPI + HID caps | Verified on connected S640 |
 | Read/init/dispose | Stable overlapped IO + RAII | Read verified; write/init and suspend/reconnect need hardware checks |
-| Windows absolute pointer/buttons | `SendInput` with virtual-desktop normalization | Implemented; not enabled during this session |
+| Windows pointer output | Mouse via `SendInput`; optional Windows Ink via synthetic pen injection | Implemented; physical drawing behavior needs app-by-app testing |
 | Settings application/persistence | `otd-app/engine.rs`, `persistence.rs` | Validated replacement; failed save preserves prior state |
 | UI | Native Win32 panel, bounded commands, 4 Hz snapshots | Apply/Stop/Start/Save/validation smoke test passes |
 | CLI and measurements | Console executable + PowerShell gate | Implemented |
 | Original .NET plugin compatibility | None | Pending; a pure Rust build cannot load existing plugins directly |
-| Other tablets, relative output, artist pressure output | None | Pending |
+| Other tablets, relative output, tilt output | None | Pending |
 | Linux/macOS and packaging/service/updater | None | Pending |
 
 Before using this as the active driver:

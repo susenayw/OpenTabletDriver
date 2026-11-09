@@ -21,7 +21,7 @@ One million synthetic S640 packets, decode + affine mapping + pressure/button ma
 - Independently timed samples: 100 ns p50/p95/p99; these include clock overhead and have coarse timing resolution.
 - In the UI simulation, the final telemetry interval averaged approximately 0.195 microseconds of core processing per report. Maximum observed was 88.4 microseconds under the host's scheduling noise.
 
-These figures **exclude** USB transport, queueing in the OS, `SendInput`, compositor/display latency, and UI reaction time. A lower end-to-end latency than the existing driver has not been established. Do not present these nanosecond figures as pen-to-screen latency.
+These figures **exclude** USB transport, queueing in the OS, `SendInput`/`InjectSyntheticPointerInput`, compositor/display latency, and UI reaction time. A lower end-to-end latency than the existing driver has not been established. Do not present these nanosecond figures as pen-to-screen latency.
 
 ## Live S640 observation
 

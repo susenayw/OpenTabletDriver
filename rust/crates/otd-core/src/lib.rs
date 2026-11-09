@@ -7,4 +7,4 @@ pub mod settings;
 pub use config::{TabletConfig, Variant};
 pub use mapping::{MappedReport, Mapper};
 pub use parser::{ParseError, PenReport, Report};
-pub use settings::{Area, DisplayRect, MouseBinding, Settings};
+pub use settings::{Area, DisplayRect, MouseBinding, OutputMode, Settings};
